@@ -64,12 +64,16 @@ function deleteTicket(channelId) {
 }
 
 // ─── Check support role ────────────────────────────────────────────────────────
-// جيب الـ member من جديد من السيرفر عشان الـ roles تكون محدّثة
 async function checkSupport(guild, userId) {
   try {
     const m = await guild.members.fetch(userId);
-    return m.roles.cache.has(SUPPORT_ROLE_ID) || m.permissions.has(PermissionFlagsBits.Administrator);
-  } catch {
+    const hasRole  = m.roles.cache.has(SUPPORT_ROLE_ID);
+    const isAdmin  = m.permissions.has(PermissionFlagsBits.Administrator);
+    const roleList = m.roles.cache.map(r => `${r.name}(${r.id})`).join(", ");
+    console.log(`[checkSupport] user=${userId} SUPPORT_ROLE_ID=${SUPPORT_ROLE_ID} hasRole=${hasRole} isAdmin=${isAdmin} roles=[${roleList}]`);
+    return hasRole || isAdmin;
+  } catch (e) {
+    console.log(`[checkSupport ERROR] ${e.message}`);
     return false;
   }
 }
