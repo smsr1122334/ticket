@@ -49,12 +49,17 @@ function setTicket(id, info) { const d = load(); d.tickets[id] = info; save(d); 
 function getTicket(id) { return load().tickets[id] || null; }
 function removeTicket(id) { const d = load(); delete d.tickets[id]; save(d); }
 
-// ─── isSupport ─────────────────────────────────────────────────────────────────
-function isSupport(member) {
-  return (
-    member.roles.cache.has(config.supportRoleId) ||
-    member.permissions.has(PermissionFlagsBits.Administrator)
-  );
+// ─── isSupport (fetch fresh so roles cache is never stale) ────────────────────
+async function isSupport(member) {
+  try {
+    const fresh = await member.guild.members.fetch(member.id);
+    return (
+      fresh.roles.cache.has(config.supportRoleId) ||
+      fresh.permissions.has(PermissionFlagsBits.Administrator)
+    );
+  } catch {
+    return member.permissions.has(PermissionFlagsBits.Administrator);
+  }
 }
 
 // ─── HTML Transcript ───────────────────────────────────────────────────────────
@@ -168,80 +173,70 @@ body{font-family:'Cairo',sans-serif;background:#1a1b2e;color:#c9d1d9;padding:24p
 
 // ─── Archive + DM sender ───────────────────────────────────────────────────────
 async function sendTranscriptEverywhere(html, stats, info, closedByMember, guild, sendDM = true) {
-  const buf      = Buffer.from(html, "utf8");
-  const fileName = `transcript-ticket-${String(info.ticketNumber).padStart(4, "0")}.html`;
-  const fileSize = `${(buf.length / 1024).toFixed(0)} KB`;
+  const buf          = Buffer.from(html, "utf8");
+  const fileName     = `transcript-ticket-${String(info.ticketNumber).padStart(4, "0")}.html`;
+  const fileSize     = `${(buf.length / 1024).toFixed(0)} KB`;
+  const closedByName = closedByMember?.user?.username ?? closedByMember?.username ?? String(closedByMember);
+  const closedById   = closedByMember?.id ?? "";
 
-  // ── DM للفاتح ──
+  // نص Server-Info بالضبط زي Ticket Tool
+  const serverInfoText =
+    "```\n" +
+    "<Server-Info>\n" +
+    `    Server: ${guild.name} (${guild.id})\n` +
+    `    Channel: ${info.channelName} (${info.channelId})\n` +
+    `    Messages: ${stats.totalMessages}\n` +
+    `    Attachments Saved: ${stats.totalAttachments}\n` +
+    "```";
+
+  // بناء الإمبد — نفس حقول Ticket Tool
+  function buildEmbed(avatarURL) {
+    const eb = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .addFields(
+        { name: "صاحب التيكت", value: `<@${info.userId}>`,  inline: true },
+        { name: "اسم التيكت",  value: info.channelName,       inline: true },
+        { name: "أُغلق بواسطة", value: closedById ? `<@${closedById}>` : closedByName, inline: true },
+        {
+          name: "المشاركون في التيكت",
+          value: stats.participants.length
+            ? stats.participants.map(p => `• ${p}`).join("\n")
+            : "—",
+          inline: false,
+        }
+      )
+      .setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` })
+      .setTimestamp();
+
+    if (avatarURL) eb.setAuthor({ name: info.username, iconURL: avatarURL });
+    else           eb.setAuthor({ name: info.username });
+
+    return eb;
+  }
+
+  // ── DM للفاتح ──────────────────────────────────────────────────────────────
   if (sendDM) {
     try {
       const opener = await client.users.fetch(info.userId);
-      const file   = new AttachmentBuilder(buf, { name: fileName });
-
-      // رسالة الـ Server-Info مثل Ticket Tool
-      const serverInfoText =
-        `\`\`\`\n` +
-        `<Server-Info>\n` +
-        `    Server: ${guild.name} (${guild.id})\n` +
-        `    Channel: ${info.channelName} (${info.channelId})\n` +
-        `    Messages: ${stats.totalMessages}\n` +
-        `    Attachments Saved: ${stats.totalAttachments}\n` +
-        `\`\`\``;
-
-      const dmEmbed = new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setAuthor({ name: info.username, iconURL: opener.displayAvatarURL() })
-        .addFields(
-          { name: "صاحب التيكت", value: `<@${info.userId}>`, inline: true },
-          { name: "اسم التيكت",  value: info.channelName,      inline: true },
-          { name: "أُغلق بواسطة", value: `${closedByMember}`,  inline: true },
-          {
-            name: "المشاركون في التيكت",
-            value: stats.participants.map(p => `• ${p}`).join("\n") || "—",
-            inline: false,
-          }
-        )
-        .setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` })
-        .setTimestamp();
-
-      await opener.send({ content: serverInfoText, embeds: [dmEmbed], files: [file] });
-    } catch {
-      console.log("[DM] المستخدم أغلق الرسائل الخاصة.");
+      await opener.send({
+        content: serverInfoText,
+        embeds:  [buildEmbed(opener.displayAvatarURL())],
+        files:   [new AttachmentBuilder(buf, { name: fileName })],
+      });
+    } catch (e) {
+      console.log("[DM] المستخدم أغلق الرسائل الخاصة:", e.message);
     }
   }
 
-  // ── الأرشيف ──
+  // ── الأرشيف ────────────────────────────────────────────────────────────────
   if (config.archiveChannelId) {
     try {
       const archiveCh = await client.channels.fetch(config.archiveChannelId);
-      const file      = new AttachmentBuilder(buf, { name: fileName });
-
-      const serverInfoText =
-        `\`\`\`\n` +
-        `<Server-Info>\n` +
-        `    Server: ${guild.name} (${guild.id})\n` +
-        `    Channel: ${info.channelName} (${info.channelId})\n` +
-        `    Messages: ${stats.totalMessages}\n` +
-        `    Attachments Saved: ${stats.totalAttachments}\n` +
-        `\`\`\``;
-
-      const archiveEmbed = new EmbedBuilder()
-        .setColor(0x5865f2)
-        .setAuthor({ name: info.username })
-        .addFields(
-          { name: "صاحب التيكت", value: `<@${info.userId}>`, inline: true },
-          { name: "اسم التيكت",  value: info.channelName,      inline: true },
-          { name: "أُغلق بواسطة", value: `${closedByMember}`,  inline: true },
-          {
-            name: "المشاركون في التيكت",
-            value: stats.participants.map(p => `• ${p}`).join("\n") || "—",
-            inline: false,
-          }
-        )
-        .setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` })
-        .setTimestamp();
-
-      await archiveCh.send({ content: serverInfoText, embeds: [archiveEmbed], files: [file] });
+      await archiveCh.send({
+        content: serverInfoText,
+        embeds:  [buildEmbed(null)],
+        files:   [new AttachmentBuilder(buf, { name: fileName })],
+      });
     } catch (e) {
       console.log("[Archive Error]", e.message);
     }
@@ -354,7 +349,7 @@ client.on("interactionCreate", async (interaction) => {
   // ══ كلايم ══════════════════════════════════════════════════════════════════════
   if (customId === "claim_ticket") {
     // فريق الدعم فقط — بدون استثناء
-    if (!isSupport(member))
+    if (!await isSupport(member))
       return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه الكلايم.", ephemeral: true });
 
     const info = getTicket(channel.id);
@@ -379,7 +374,7 @@ client.on("interactionCreate", async (interaction) => {
 
   // ══ قفل التيكت ═════════════════════════════════════════════════════════════════
   if (customId === "lock_ticket") {
-    if (!isSupport(member))
+    if (!await isSupport(member))
       return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه القفل.", ephemeral: true });
 
     const info = getTicket(channel.id);
@@ -411,7 +406,7 @@ client.on("interactionCreate", async (interaction) => {
 
   // ══ تأكيد القفل ════════════════════════════════════════════════════════════════
   if (customId === "confirm_lock") {
-    if (!isSupport(member))
+    if (!await isSupport(member))
       return interaction.reply({ content: "❌ غير مصرح.", ephemeral: true });
 
     const info = getTicket(channel.id);
@@ -468,7 +463,7 @@ client.on("interactionCreate", async (interaction) => {
 
   // ══ فتح القفل ══════════════════════════════════════════════════════════════════
   if (customId === "unlock_ticket") {
-    if (!isSupport(member))
+    if (!await isSupport(member))
       return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه فتح القفل.", ephemeral: true });
 
     const info = getTicket(channel.id);
@@ -503,7 +498,7 @@ client.on("interactionCreate", async (interaction) => {
 
   // ══ إغلاق التيكت (نهائي) ═══════════════════════════════════════════════════════
   if (customId === "close_ticket") {
-    if (!isSupport(member))
+    if (!await isSupport(member))
       return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه الإغلاق.", ephemeral: true });
 
     const info = getTicket(channel.id);
