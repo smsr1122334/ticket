@@ -5,6 +5,9 @@ const {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   EmbedBuilder,
   PermissionFlagsBits,
   ChannelType,
@@ -15,10 +18,11 @@ const fs   = require("fs");
 const path = require("path");
 
 // ─── Config ────────────────────────────────────────────────────────────────────
-const TOKEN            = process.env.TOKEN;
-const SUPPORT_ROLE_ID  = process.env.SUPPORT_ROLE_ID;
-const CATEGORY_ID      = process.env.CATEGORY_ID      || null;
-const PANEL_CHANNEL_ID = process.env.PANEL_CHANNEL_ID;
+const TOKEN              = process.env.TOKEN;
+const SUPPORT_ROLE_ID    = process.env.SUPPORT_ROLE_ID;
+const ADMIN_ROLE_ID      = process.env.ADMIN_ROLE_ID;       // الإدارة العليا — تستلم الـ DM
+const CATEGORY_ID        = process.env.CATEGORY_ID   || null;
+const PANEL_CHANNEL_ID   = process.env.PANEL_CHANNEL_ID;
 const ARCHIVE_CHANNEL_ID = process.env.ARCHIVE_CHANNEL_ID;
 
 // ─── Client ────────────────────────────────────────────────────────────────────
@@ -42,44 +46,35 @@ function loadData() {
   return JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
 }
 function saveData(d) { fs.writeFileSync(DATA_FILE, JSON.stringify(d, null, 2)); }
+function nextTicketNumber() { const d = loadData(); d.counter++; saveData(d); return d.counter; }
+function saveTicket(cid, info) { const d = loadData(); d.tickets[cid] = info; saveData(d); }
+function getTicket(cid) { return loadData().tickets[cid] || null; }
+function deleteTicket(cid) { const d = loadData(); delete d.tickets[cid]; saveData(d); }
 
-function nextTicketNumber() {
-  const d = loadData();
-  d.counter++;
-  saveData(d);
-  return d.counter;
-}
-function saveTicket(channelId, info) {
-  const d = loadData();
-  d.tickets[channelId] = info;
-  saveData(d);
-}
-function getTicket(channelId) {
-  return loadData().tickets[channelId] || null;
-}
-function deleteTicket(channelId) {
-  const d = loadData();
-  delete d.tickets[channelId];
-  saveData(d);
+// ─── Role checks ───────────────────────────────────────────────────────────────
+async function fetchMember(guild, userId) {
+  return guild.members.fetch(userId).catch(() => null);
 }
 
-// ─── Check support role (الرول فقط — بدون استثناء للأدمن) ────────────────────
-async function checkSupport(guild, userId) {
-  try {
-    const m         = await guild.members.fetch(userId);
-    const roleIdStr = String(SUPPORT_ROLE_ID).trim();
-    const hasRole   = m.roles.cache.some(r => String(r.id).trim() === roleIdStr);
-    console.log(`[checkSupport] user=${userId} | lookingFor=${roleIdStr} | hasRole=${hasRole} | roles=${m.roles.cache.map(r=>r.id).join(",")}`);
-    return hasRole;
-  } catch (e) {
-    console.log(`[checkSupport ERROR] ${e.message}`);
-    return false;
-  }
+async function hasRole(guild, userId, roleId) {
+  if (!roleId) return false;
+  const m = await fetchMember(guild, userId);
+  if (!m) return false;
+  return m.roles.cache.some(r => String(r.id) === String(roleId).trim());
+}
+
+// فريق الدعم
+async function isSupport(guild, userId) {
+  return hasRole(guild, userId, SUPPORT_ROLE_ID);
+}
+
+// الإدارة العليا
+async function isAdmin(guild, userId) {
+  return hasRole(guild, userId, ADMIN_ROLE_ID);
 }
 
 // ─── Build HTML transcript ─────────────────────────────────────────────────────
 async function buildTranscript(channel, ticket, guild) {
-  // جيب كل الرسائل
   const msgs = [];
   let lastId;
   while (true) {
@@ -93,19 +88,17 @@ async function buildTranscript(channel, ticket, guild) {
   }
   msgs.reverse();
 
-  // إحصائيات
   const msgCount  = msgs.filter(m => !m.author.bot).length;
   const attCount  = msgs.reduce((n, m) => n + m.attachments.size, 0);
   const usernames = [...new Set(msgs.map(m => m.author.username))];
 
-  // بناء صفوف الرسائل
   const rows = msgs
     .filter(m => m.content || m.embeds.length || m.attachments.size)
     .map(m => {
-      const t = new Date(m.createdTimestamp).toLocaleString("ar-SA");
-      const av = `<img class="av" src="${m.author.displayAvatarURL({ size: 64 })}" onerror="this.style.display='none'">`;
+      const t    = new Date(m.createdTimestamp).toLocaleString("ar-SA");
+      const av   = `<img class="av" src="${m.author.displayAvatarURL({ size: 64 })}" onerror="this.style.display='none'">`;
       const embs = m.embeds.map(e =>
-        `<div class="emb">${e.title ? `<b>${e.title}</b><br>` : ""}${(e.description || "").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>`
+        `<div class="emb">${e.title?`<b>${e.title}</b><br>`:""}${(e.description||"").replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>`
       ).join("");
       const atts = [...m.attachments.values()].map(a =>
         a.contentType?.startsWith("image/")
@@ -173,6 +166,7 @@ body{font-family:'Cairo',sans-serif;background:#1a1b2e;color:#c9d1d9;padding:24p
     <div class="gi"><div class="l">وقت الفتح</div><div class="v">${openedAt}</div></div>
     <div class="gi"><div class="l">وقت الإغلاق</div><div class="v">${closedAt}</div></div>
     ${ticket.claimedByName?`<div class="gi"><div class="l">الكلايم</div><div class="v">${ticket.claimedByName}</div></div>`:""}
+    ${ticket.closeReason?`<div class="gi" style="grid-column:1/-1"><div class="l">سبب الإغلاق</div><div class="v">${ticket.closeReason}</div></div>`:""}
   </div>
 </div>
 <div class="msgs">${rows||"<p style='color:#6e7681;text-align:center;padding:40px'>لا توجد رسائل.</p>"}</div>
@@ -182,71 +176,134 @@ body{font-family:'Cairo',sans-serif;background:#1a1b2e;color:#c9d1d9;padding:24p
   return { html, msgCount, attCount, usernames };
 }
 
-// ─── Send transcript to DM and/or archive ─────────────────────────────────────
-async function sendTranscript(transcriptData, ticket, closedByUsername, closedById, guild, { dm = true, archive = true } = {}) {
-  const { html, msgCount, attCount, usernames } = transcriptData;
+// ─── Upload transcript to archive channel & get CDN link ──────────────────────
+// يرفع الملف في قناة الأرشيف ويرجع رابط CDN مباشر
+async function uploadTranscript(buf, fileName, ticket, closedByUserId, closeReason, guild, usernames, msgCount, attCount) {
+  if (!ARCHIVE_CHANNEL_ID) return null;
+  try {
+    const archiveCh = await client.channels.fetch(ARCHIVE_CHANNEL_ID);
+    const fileSize  = `${(buf.length / 1024).toFixed(0)} KB`;
+
+    const serverInfo =
+      "```\n" +
+      "<Server-Info>\n" +
+      `    Server: ${guild.name} (${guild.id})\n` +
+      `    Channel: ${ticket.channelName} (${ticket.channelId})\n` +
+      `    Messages: ${msgCount}\n` +
+      `    Attachments Saved: ${attCount}\n` +
+      "```";
+
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setAuthor({ name: ticket.username })
+      .addFields(
+        { name: "Ticket Owner",          value: `<@${ticket.userId}>`,    inline: true },
+        { name: "Ticket Name",           value: ticket.channelName,        inline: true },
+        { name: "Panel Name",            value: "نظام التيكتات",           inline: true },
+        { name: "Closed By",             value: `<@${closedByUserId}>`,    inline: true },
+        { name: "Close Reason",          value: closeReason || "—",        inline: true },
+        { name: "Direct Transcript",     value: "Use Button",              inline: true },
+        {
+          name:  "Users in transcript",
+          value: usernames.map((u, i) => `${i + 1}- ${u}`).join("\n") || "—",
+          inline: false,
+        }
+      )
+      .setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` })
+      .setTimestamp();
+
+    // إرسال الملف وجيب الـ URL من CDN
+    const sent = await archiveCh.send({
+      content: serverInfo,
+      embeds:  [embed],
+      files:   [new AttachmentBuilder(buf, { name: fileName })],
+    });
+
+    // رابط CDN المباشر من أول مرفق
+    const cdnUrl = sent.attachments.first()?.url ?? null;
+    return { message: sent, cdnUrl };
+  } catch (e) {
+    console.log("[Archive Error]", e.message);
+    return null;
+  }
+}
+
+// ─── Send DM to admins only ───────────────────────────────────────────────────
+async function dmAdmins(guild, embed, buf, fileName) {
+  if (!ADMIN_ROLE_ID) return;
+  try {
+    const members = await guild.members.fetch();
+    const admins  = members.filter(m => m.roles.cache.some(r => String(r.id) === String(ADMIN_ROLE_ID).trim()));
+    for (const [, admin] of admins) {
+      try {
+        await admin.send({
+          embeds: [embed],
+          files:  [new AttachmentBuilder(buf, { name: fileName })],
+        });
+      } catch { /* DM مغلق */ }
+    }
+  } catch (e) {
+    console.log("[DM Admin Error]", e.message);
+  }
+}
+
+// ─── Close ticket (shared logic) ──────────────────────────────────────────────
+async function doClose(interaction, channel, ticket, guild, closedByUserId, closeReason) {
+  ticket.channelName  = channel.name;
+  ticket.closeReason  = closeReason;
+  const { html, msgCount, attCount, usernames } = await buildTranscript(channel, ticket, guild);
+
   const buf      = Buffer.from(html, "utf8");
   const fileName = `transcript-ticket-${String(ticket.ticketNumber).padStart(4, "0")}.html`;
   const fileSize = `${(buf.length / 1024).toFixed(0)} KB`;
 
-  // نص Server-Info
-  const serverInfo =
-    "```\n" +
-    "<Server-Info>\n" +
-    `    Server: ${guild.name} (${guild.id})\n` +
-    `    Channel: ${ticket.channelName} (${ticket.channelId})\n` +
-    `    Messages: ${msgCount}\n` +
-    `    Attachments Saved: ${attCount}\n` +
-    "```";
+  // 1) رفع في الأرشيف وجيب رابط CDN
+  const result = await uploadTranscript(buf, fileName, ticket, closedByUserId, closeReason, guild, usernames, msgCount, attCount);
+  const cdnUrl = result?.cdnUrl;
 
-  // بناء الإمبد — بالضبط مثل Ticket Tool
-  function makeEmbed(avatarURL) {
-    const eb = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .addFields(
-        { name: "Ticket Owner", value: `<@${ticket.userId}>`,  inline: true },
-        { name: "Ticket Name",  value: ticket.channelName,      inline: true },
-        { name: "Panel Name",   value: "نظام التيكتات",         inline: true },
-        { name: "Direct Transcript", value: "Use Button",       inline: true },
-        { name: "Users in transcript", value: usernames.map((u, i) => `${i+1}- ${u}`).join("\n") || "—", inline: true }
-      )
-      .setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` })
-      .setTimestamp();
-    if (avatarURL) eb.setAuthor({ name: ticket.username, iconURL: avatarURL });
-    else           eb.setAuthor({ name: ticket.username });
-    return eb;
-  }
+  // 2) إمبد للـ DM يحتوي الرابط المباشر
+  const dmEmbed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle(`📋 سجل تيكتك #${ticket.ticketNumber}`)
+    .setDescription(
+      `تم إغلاق تيكتك في **${guild.name}**.\n` +
+      (cdnUrl ? `\n🔗 **[اضغط هنا لعرض المحادثة الكاملة](${cdnUrl})**` : "")
+    )
+    .addFields(
+      { name: "🏠 السيرفر",       value: guild.name,              inline: true },
+      { name: "👮 أُغلق بواسطة", value: `<@${closedByUserId}>`,  inline: true },
+      { name: "📝 السبب",         value: closeReason || "—",       inline: true },
+      { name: "⏱️ المدة",        value: `${Math.round((Date.now()-ticket.createdAt)/60000)} دقيقة`, inline: true }
+    )
+    .setTimestamp();
 
-  // ── DM ──
-  if (dm) {
-    try {
-      const user = await client.users.fetch(ticket.userId);
-      await user.send({
-        content: serverInfo,
-        embeds:  [makeEmbed(user.displayAvatarURL())],
-        files:   [new AttachmentBuilder(buf, { name: fileName })],
-      });
-    } catch (e) {
-      console.log("[DM Error]", e.message);
-    }
-  }
+  // 3) DM للإدارة العليا فقط
+  await dmAdmins(guild, dmEmbed, buf, fileName);
 
-  // ── Archive ──
-  if (archive && ARCHIVE_CHANNEL_ID) {
-    try {
-      const ch = await client.channels.fetch(ARCHIVE_CHANNEL_ID);
-      await ch.send({
-        content: serverInfo,
-        embeds:  [makeEmbed(null)],
-        files:   [new AttachmentBuilder(buf, { name: fileName })],
-      });
-    } catch (e) {
-      console.log("[Archive Error]", e.message);
-    }
-  }
+  ticket.closed = true;
+  deleteTicket(channel.id);
+
+  return cdnUrl;
 }
 
-// ─── Send ticket panel ─────────────────────────────────────────────────────────
+// ─── Rows ──────────────────────────────────────────────────────────────────────
+function normalRow(claimed) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("claim_ticket").setLabel("كلايم").setEmoji("🟡").setStyle(ButtonStyle.Secondary).setDisabled(!!claimed),
+    new ButtonBuilder().setCustomId("lock_ticket").setLabel("قفل التيكت").setEmoji("🔒").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("close_with_reason").setLabel("إغلاق مع السبب").setEmoji("❌").setStyle(ButtonStyle.Danger)
+  );
+}
+
+function lockedRow(claimed) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("claim_ticket").setLabel("كلايم").setEmoji("🟡").setStyle(ButtonStyle.Secondary).setDisabled(!!claimed),
+    new ButtonBuilder().setCustomId("unlock_ticket").setLabel("فتح القفل").setEmoji("🔓").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("close_with_reason").setLabel("إغلاق مع السبب").setEmoji("❌").setStyle(ButtonStyle.Danger)
+  );
+}
+
+// ─── Panel ─────────────────────────────────────────────────────────────────────
 async function sendPanel(channel) {
   const embed = new EmbedBuilder()
     .setTitle("🎫 نظام التيكتات")
@@ -255,34 +312,14 @@ async function sendPanel(channel) {
     .setFooter({ text: "نظام الدعم الفني" })
     .setTimestamp();
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("open_ticket")
-      .setLabel("فتح تيكت")
-      .setEmoji("🎫")
-      .setStyle(ButtonStyle.Primary)
-  );
-
-  await channel.send({ embeds: [embed], components: [row] });
-}
-
-// ─── زر controls بعد القفل ────────────────────────────────────────────────────
-function lockedRow(claimed) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("claim_ticket").setLabel("كلايم").setEmoji("🟡").setStyle(ButtonStyle.Secondary).setDisabled(!!claimed),
-    new ButtonBuilder().setCustomId("unlock_ticket").setLabel("فتح القفل").setEmoji("🔓").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("close_ticket").setLabel("إغلاق التيكت").setEmoji("❌").setStyle(ButtonStyle.Danger)
-  );
-}
-
-// ─── زر controls عادي (قبل القفل) ────────────────────────────────────────────
-// الفاتح يشوف زر الإغلاق — فريق الدعم يشوف كلايم + قفل
-function normalRow(claimed) {
-  return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("claim_ticket").setLabel("كلايم").setEmoji("🟡").setStyle(ButtonStyle.Secondary).setDisabled(!!claimed),
-    new ButtonBuilder().setCustomId("lock_ticket").setLabel("قفل التيكت").setEmoji("🔒").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("opener_close_ticket").setLabel("إغلاق التيكت").setEmoji("🔐").setStyle(ButtonStyle.Danger)
-  );
+  await channel.send({
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("open_ticket").setLabel("فتح تيكت").setEmoji("🎫").setStyle(ButtonStyle.Primary)
+      )
+    ],
+  });
 }
 
 // ─── Ready ─────────────────────────────────────────────────────────────────────
@@ -292,106 +329,109 @@ client.once("ready", async () => {
     try {
       const ch   = await client.channels.fetch(PANEL_CHANNEL_ID);
       const msgs = await ch.messages.fetch({ limit: 10 });
-      const has  = msgs.some(m => m.author.id === client.user.id && m.components.length > 0);
-      if (!has) await sendPanel(ch);
+      if (!msgs.some(m => m.author.id === client.user.id && m.components.length))
+        await sendPanel(ch);
     } catch (e) { console.log("[Panel Error]", e.message); }
   }
 });
 
 // ─── Interactions ──────────────────────────────────────────────────────────────
 client.on("interactionCreate", async (interaction) => {
-  if (!interaction.isButton()) return;
-
-  const { customId, guild, channel } = interaction;
+  const { guild, channel } = interaction;
   const userId   = interaction.user.id;
   const username = interaction.user.username;
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // فتح تيكت
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ══ Modal submit ══════════════════════════════════════════════════════════════
+  if (interaction.isModalSubmit() && interaction.customId === "close_reason_modal") {
+    const reason = interaction.fields.getTextInputValue("reason_input").trim() || "لم يُذكر سبب";
+    const ticket = getTicket(channel.id);
+
+    if (!ticket)
+      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
+
+    // فريق الدعم أو الفاتح
+    const support = await isSupport(guild, userId);
+    if (!support && ticket.userId !== userId)
+      return interaction.reply({ content: "❌ غير مصرح.", flags: 64 });
+
+    // فريق الدعم يحتاج قفل أولاً — الفاتح لا يحتاج
+    if (support && !ticket.locked)
+      return interaction.reply({ content: "❌ يجب **قفل** التيكت أولاً.", flags: 64 });
+
+    await interaction.deferReply();
+
+    const cdnUrl = await doClose(interaction, channel, ticket, guild, userId, reason);
+
+    await interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription(
+            `✅ تم إغلاق التيكت.\n📝 السبب: **${reason}**\n` +
+            (cdnUrl ? `\n🔗 [عرض المحادثة](${cdnUrl})` : "")
+          )
+          .setColor(0xed4245),
+      ],
+    });
+
+    setTimeout(() => channel.delete().catch(() => {}), 5000);
+    return;
+  }
+
+  if (!interaction.isButton()) return;
+  const { customId } = interaction;
+
+  // ══ فتح تيكت ══════════════════════════════════════════════════════════════════
   if (customId === "open_ticket") {
     await interaction.deferReply({ flags: 64 });
 
-    // تحقق من تيكت موجود
-    const data = loadData();
-    const existing = Object.values(data.tickets).find(
-      t => t.userId === userId && t.guildId === guild.id && !t.closed
-    );
+    const data     = loadData();
+    const existing = Object.values(data.tickets).find(t => t.userId === userId && t.guildId === guild.id && !t.closed);
     if (existing) {
       const ch = guild.channels.cache.get(existing.channelId);
-      return interaction.editReply({
-        content: `❌ لديك تيكت مفتوح بالفعل: ${ch ?? `#ticket-${existing.ticketNumber}`}`,
-      });
+      return interaction.editReply({ content: `❌ لديك تيكت مفتوح: ${ch ?? `#ticket-${existing.ticketNumber}`}` });
     }
 
-    const num      = nextTicketNumber();
-    const catObj   = CATEGORY_ID ? guild.channels.cache.get(CATEGORY_ID) : null;
+    const num    = nextTicketNumber();
+    const catObj = CATEGORY_ID ? guild.channels.cache.get(CATEGORY_ID) : null;
 
     const tc = await guild.channels.create({
       name: `ticket-${num}`,
       type: ChannelType.GuildText,
       parent: catObj || null,
       permissionOverwrites: [
-        { id: guild.id,         deny:  [PermissionFlagsBits.ViewChannel] },
-        { id: userId,           allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles] },
-        { id: SUPPORT_ROLE_ID,  allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ManageChannels] },
+        { id: guild.id,        deny:  [PermissionFlagsBits.ViewChannel] },
+        { id: userId,          allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles] },
+        { id: SUPPORT_ROLE_ID, allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ReadMessageHistory, PermissionFlagsBits.AttachFiles, PermissionFlagsBits.ManageChannels] },
       ],
     });
 
-    const ticket = {
-      channelId:     tc.id,
-      channelName:   tc.name,
-      userId,
-      username,
-      ticketNumber:  num,
-      guildId:       guild.id,
-      createdAt:     Date.now(),
-      claimed:       false,
-      claimedBy:     null,
-      claimedByName: null,
-      locked:        false,
-      closed:        false,
-    };
+    const ticket = { channelId: tc.id, channelName: tc.name, userId, username, ticketNumber: num, guildId: guild.id, createdAt: Date.now(), claimed: false, claimedBy: null, claimedByName: null, locked: false, closed: false, closeReason: null };
     saveTicket(tc.id, ticket);
 
     const embed = new EmbedBuilder()
       .setTitle(`🎫 تيكت #${num}`)
-      .setDescription(`أهلاً <@${userId}>!\n\nتم فتح تيكتك بنجاح. سيتواصل معك فريق الدعم قريباً.\nاشرح مشكلتك بالتفصيل.`)
+      .setDescription(`أهلاً <@${userId}>!\n\nتم فتح تيكتك. سيتواصل معك فريق الدعم قريباً.\nاشرح مشكلتك بالتفصيل.`)
       .setColor(0x57f287)
       .addFields(
         { name: "👤 فاتح التيكت", value: `<@${userId}>`, inline: true },
         { name: "🔢 رقم التيكت",  value: `#${num}`,       inline: true },
         { name: "📅 وقت الفتح",   value: `<t:${Math.floor(Date.now()/1000)}:F>`, inline: true }
-      )
-      .setTimestamp();
+      ).setTimestamp();
 
-    await tc.send({
-      content: `<@${userId}> | <@&${SUPPORT_ROLE_ID}>`,
-      embeds:  [embed],
-      components: [normalRow(false)],
-    });
-
+    await tc.send({ content: `<@${userId}> | <@&${SUPPORT_ROLE_ID}>`, embeds: [embed], components: [normalRow(false)] });
     await interaction.editReply({ content: `✅ تم فتح تيكتك: ${tc}` });
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // كلايم
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ══ كلايم ══════════════════════════════════════════════════════════════════════
   if (customId === "claim_ticket") {
-    // ✅ تحقق من الرول بعد fetch جديد
-    const allowed = await checkSupport(guild, userId);
-    if (!allowed)
+    if (!await isSupport(guild, userId))
       return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه الكلايم.", flags: 64 });
 
     const ticket = getTicket(channel.id);
-    if (!ticket)
-      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
-    if (ticket.claimed)
-      return interaction.reply({ content: `❌ مكلايم بالفعل من <@${ticket.claimedBy}>.`, flags: 64 });
+    if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
+    if (ticket.claimed) return interaction.reply({ content: `❌ مكلايم بالفعل من <@${ticket.claimedBy}>.`, flags: 64 });
 
-    ticket.claimed       = true;
-    ticket.claimedBy     = userId;
-    ticket.claimedByName = username;
+    ticket.claimed = true; ticket.claimedBy = userId; ticket.claimedByName = username;
     saveTicket(channel.id, ticket);
 
     const newName = `🟡-${username}-${ticket.ticketNumber}`;
@@ -399,24 +439,17 @@ client.on("interactionCreate", async (interaction) => {
     ticket.channelName = newName;
     saveTicket(channel.id, ticket);
 
-    await interaction.reply({
-      embeds: [new EmbedBuilder().setDescription(`🟡 تم الكلايم من قِبل <@${userId}>`).setColor(0xfee75c)],
-    });
+    await interaction.reply({ embeds: [new EmbedBuilder().setDescription(`🟡 تم الكلايم من قِبل <@${userId}>`).setColor(0xfee75c)] });
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // قفل التيكت — رسالة تأكيد
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ══ قفل التيكت ═════════════════════════════════════════════════════════════════
   if (customId === "lock_ticket") {
-    const allowed = await checkSupport(guild, userId);
-    if (!allowed)
+    if (!await isSupport(guild, userId))
       return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه القفل.", flags: 64 });
 
     const ticket = getTicket(channel.id);
-    if (!ticket)
-      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
-    if (ticket.locked)
-      return interaction.reply({ content: "❌ التيكت مقفل بالفعل.", flags: 64 });
+    if (!ticket)      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
+    if (ticket.locked) return interaction.reply({ content: "❌ التيكت مقفل بالفعل.", flags: 64 });
 
     const confirmRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("confirm_lock").setLabel("نعم، قفل التيكت").setEmoji("🔒").setStyle(ButtonStyle.Danger),
@@ -424,220 +457,97 @@ client.on("interactionCreate", async (interaction) => {
     );
 
     await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("⚠️ تأكيد القفل")
-          .setDescription(
-            "هل أنت متأكد من قفل هذا التيكت؟\n\n" +
-            "• فاتح التيكت **لن يرى القناة** حتى يفتح الإداري القفل\n" +
-            "• سيتم حفظ السجل في الأرشيف\n" +
-            "• سيظهر زر **الإغلاق النهائي** بعد القفل"
-          )
-          .setColor(0xfee75c),
-      ],
+      embeds: [new EmbedBuilder().setTitle("⚠️ تأكيد القفل").setDescription("هل أنت متأكد من قفل هذا التيكت؟\n\n• فاتح التيكت **لن يرى القناة** حتى يفتح الإداري القفل\n• سيتم حفظ السجل في الأرشيف\n• سيظهر زر **الإغلاق** بعد القفل").setColor(0xfee75c)],
       components: [confirmRow],
       flags: 64,
     });
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // تأكيد القفل
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ══ تأكيد القفل ════════════════════════════════════════════════════════════════
   if (customId === "confirm_lock") {
-    const allowed = await checkSupport(guild, userId);
-    if (!allowed)
+    if (!await isSupport(guild, userId))
       return interaction.reply({ content: "❌ غير مصرح.", flags: 64 });
 
     const ticket = getTicket(channel.id);
-    if (!ticket)
-      return interaction.reply({ content: "❌ التيكت غير موجود.", flags: 64 });
+    if (!ticket) return interaction.reply({ content: "❌ التيكت غير موجود.", flags: 64 });
 
-    // أغلق الـ ephemeral confirmation أولاً
     await interaction.update({ embeds: [], components: [], content: "⏳ جاري القفل..." });
 
-    // ✅ سحب ViewChannel كاملاً من فاتح التيكت — deny صريح يتجاوز حتى الأدمن
     await channel.permissionOverwrites.edit(ticket.userId, {
-      ViewChannel:        false,
-      SendMessages:       false,
-      ReadMessageHistory: false,
-      Administrator:      false,
+      ViewChannel: false, SendMessages: false, ReadMessageHistory: false,
     }).catch(e => console.log("[Perm Error]", e.message));
 
-    ticket.locked      = true;
-    ticket.channelName = channel.name;
+    ticket.locked = true; ticket.channelName = channel.name;
     saveTicket(channel.id, ticket);
 
-    // بناء وإرسال الترانسكريبت للأرشيف فقط
-    const transcriptData = await buildTranscript(channel, ticket, guild);
-    await sendTranscript(transcriptData, ticket, username, userId, guild, { dm: false, archive: true });
+    // أرشفة عند القفل
+    const { html, msgCount, attCount, usernames } = await buildTranscript(channel, ticket, guild);
+    const buf      = Buffer.from(html, "utf8");
+    const fileName = `transcript-ticket-${String(ticket.ticketNumber).padStart(4, "0")}.html`;
+    await uploadTranscript(buf, fileName, ticket, userId, "قفل التيكت", guild, usernames, msgCount, attCount);
 
-    // إرسال رسالة القفل في القناة مع الأزرار الجديدة
     await channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("🔒 تم قفل التيكت")
-          .setDescription(
-            `تم قفل هذا التيكت من قِبل <@${userId}>.\n\n` +
-            `• <@${ticket.userId}> لا يرى هذه القناة الآن\n` +
-            `• تم حفظ السجل في الأرشيف\n` +
-            `• استخدم **إغلاق التيكت** للإغلاق النهائي`
-          )
-          .setColor(0xed4245)
-          .setTimestamp(),
-      ],
+      embeds: [new EmbedBuilder().setTitle("🔒 تم قفل التيكت").setDescription(`تم قفل هذا التيكت من قِبل <@${userId}>.\n\n• <@${ticket.userId}> لا يرى هذه القناة الآن\n• تم حفظ السجل في الأرشيف\n• استخدم **إغلاق مع السبب** للإغلاق النهائي`).setColor(0xed4245).setTimestamp()],
       components: [lockedRow(ticket.claimed)],
     });
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // إلغاء القفل
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ══ إلغاء القفل ════════════════════════════════════════════════════════════════
   if (customId === "cancel_lock") {
-    await interaction.update({
-      embeds:     [new EmbedBuilder().setDescription("✅ تم إلغاء القفل.").setColor(0x57f287)],
-      components: [],
-    });
+    await interaction.update({ embeds: [new EmbedBuilder().setDescription("✅ تم إلغاء القفل.").setColor(0x57f287)], components: [] });
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // فتح القفل
-  // ══════════════════════════════════════════════════════════════════════════════
+  // ══ فتح القفل ══════════════════════════════════════════════════════════════════
   if (customId === "unlock_ticket") {
-    const allowed = await checkSupport(guild, userId);
-    if (!allowed)
+    if (!await isSupport(guild, userId))
       return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه فتح القفل.", flags: 64 });
 
     const ticket = getTicket(channel.id);
     if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
 
-    // ✅ إرجاع ViewChannel لفاتح التيكت
     await channel.permissionOverwrites.edit(ticket.userId, {
-      ViewChannel:        true,
-      SendMessages:       true,
-      ReadMessageHistory: true,
-      AttachFiles:        true,
+      ViewChannel: true, SendMessages: true, ReadMessageHistory: true, AttachFiles: true,
     }).catch(e => console.log("[Perm Error]", e.message));
 
     ticket.locked = false;
     saveTicket(channel.id, ticket);
 
     await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription(`🔓 تم فتح القفل من قِبل <@${userId}>.\n<@${ticket.userId}> يستطيع الآن رؤية القناة والكتابة.`)
-          .setColor(0x57f287),
-      ],
+      embeds: [new EmbedBuilder().setDescription(`🔓 تم فتح القفل من قِبل <@${userId}>.\n<@${ticket.userId}> يستطيع الآن رؤية القناة والكتابة.`).setColor(0x57f287)],
       components: [normalRow(ticket.claimed)],
     });
   }
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // إغلاق التيكت من قِبل الفاتح
-  // ══════════════════════════════════════════════════════════════════════════════
-  if (customId === "opener_close_ticket") {
+  // ══ إغلاق مع السبب (modal) ════════════════════════════════════════════════════
+  if (customId === "close_with_reason") {
     const ticket = getTicket(channel.id);
-    if (!ticket)
-      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
+    if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
 
-    // فقط الفاتح يقدر يضغطه
-    if (ticket.userId !== userId)
-      return interaction.reply({ content: "❌ فقط فاتح التيكت يمكنه إغلاقه.", flags: 64 });
+    const support = await isSupport(guild, userId);
 
-    if (ticket.locked)
-      return interaction.reply({ content: "❌ التيكت مقفل من قِبل الإدارة ولا يمكن إغلاقه.", flags: 64 });
+    // فريق الدعم يحتاج قفل أولاً
+    if (support && !ticket.locked)
+      return interaction.reply({ content: "❌ يجب **قفل** التيكت أولاً قبل الإغلاق. استخدم زر 🔒 القفل.", flags: 64 });
 
-    // رسالة تأكيد
-    const confirmRow = new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("opener_confirm_close").setLabel("نعم، أغلق التيكت").setEmoji("🔐").setStyle(ButtonStyle.Danger),
-      new ButtonBuilder().setCustomId("opener_cancel_close").setLabel("إلغاء").setEmoji("✖️").setStyle(ButtonStyle.Secondary)
-    );
+    // غير فريق الدعم — فقط الفاتح
+    if (!support && ticket.userId !== userId)
+      return interaction.reply({ content: "❌ فقط فاتح التيكت أو فريق الدعم يمكنهم الإغلاق.", flags: 64 });
 
-    await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setTitle("⚠️ تأكيد الإغلاق")
-          .setDescription("هل تريد إغلاق هذا التيكت؟\n\nسيتم إرسال سجل المحادثة إليك على الخاص وحذف القناة.")
-          .setColor(0xfee75c),
-      ],
-      components: [confirmRow],
-      flags: 64,
-    });
-  }
+    // فتح الـ Modal
+    const modal = new ModalBuilder()
+      .setCustomId("close_reason_modal")
+      .setTitle("سبب إغلاق التيكت");
 
-  // ══════════════════════════════════════════════════════════════════════════════
-  // تأكيد إغلاق الفاتح
-  // ══════════════════════════════════════════════════════════════════════════════
-  if (customId === "opener_confirm_close") {
-    const ticket = getTicket(channel.id);
-    if (!ticket || ticket.userId !== userId)
-      return interaction.update({ embeds: [], components: [], content: "❌ غير مصرح." });
+    const reasonInput = new TextInputBuilder()
+      .setCustomId("reason_input")
+      .setLabel("اذكر سبب الإغلاق")
+      .setStyle(TextInputStyle.Paragraph)
+      .setPlaceholder("مثال: تم حل المشكلة بنجاح")
+      .setRequired(false)
+      .setMaxLength(500);
 
-    await interaction.update({ embeds: [], components: [], content: "⏳ جاري الإغلاق..." });
-
-    ticket.channelName = channel.name;
-    const transcriptData = await buildTranscript(channel, ticket, guild);
-    await sendTranscript(transcriptData, ticket, username, userId, guild, { dm: true, archive: true });
-
-    ticket.closed = true;
-    deleteTicket(channel.id);
-
-    await channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription("✅ تم إرسال السجل للفاتح والأرشيف. سيتم حذف القناة خلال **5 ثوانٍ**.")
-          .setColor(0xed4245),
-      ],
-    });
-
-    setTimeout(() => channel.delete().catch(() => {}), 5000);
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // إلغاء إغلاق الفاتح
-  // ══════════════════════════════════════════════════════════════════════════════
-  if (customId === "opener_cancel_close") {
-    await interaction.update({
-      embeds: [new EmbedBuilder().setDescription("✅ تم إلغاء الإغلاق.").setColor(0x57f287)],
-      components: [],
-    });
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // إغلاق التيكت (نهائي - فريق الدعم)
-  // ══════════════════════════════════════════════════════════════════════════════
-  if (customId === "close_ticket") {
-    const allowed = await checkSupport(guild, userId);
-    if (!allowed)
-      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه الإغلاق.", flags: 64 });
-
-    const ticket = getTicket(channel.id);
-    if (!ticket)
-      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
-
-    if (!ticket.locked)
-      return interaction.reply({
-        content: "❌ يجب **قفل** التيكت أولاً قبل الإغلاق النهائي. استخدم زر 🔒 القفل.",
-        flags: 64,
-      });
-
-    await interaction.deferReply();
-
-    ticket.channelName = channel.name;
-    const transcriptData = await buildTranscript(channel, ticket, guild);
-    await sendTranscript(transcriptData, ticket, username, userId, guild, { dm: true, archive: true });
-
-    ticket.closed = true;
-    deleteTicket(channel.id);
-
-    await interaction.editReply({
-      embeds: [
-        new EmbedBuilder()
-          .setDescription("✅ تم إرسال السجل للفاتح والأرشيف. سيتم حذف القناة خلال **5 ثوانٍ**.")
-          .setColor(0xed4245),
-      ],
-    });
-
-    setTimeout(() => channel.delete().catch(() => {}), 5000);
+    modal.addComponents(new ActionRowBuilder().addComponents(reasonInput));
+    await interaction.showModal(modal);
   }
 });
 
