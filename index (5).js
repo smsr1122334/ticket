@@ -63,15 +63,14 @@ function deleteTicket(channelId) {
   saveData(d);
 }
 
-// ─── Check support role ────────────────────────────────────────────────────────
+// ─── Check support role (الرول فقط — بدون استثناء للأدمن) ────────────────────
 async function checkSupport(guild, userId) {
   try {
-    const m          = await guild.members.fetch(userId);
-    const roleIdStr  = String(SUPPORT_ROLE_ID).trim();                      // ضمان String
-    const hasRole    = m.roles.cache.some(r => String(r.id).trim() === roleIdStr);
-    const isAdmin    = m.permissions.has(PermissionFlagsBits.Administrator);
-    console.log(`[checkSupport] user=${userId} | lookingFor=${roleIdStr} | hasRole=${hasRole} | isAdmin=${isAdmin} | roles=${m.roles.cache.map(r=>r.id).join(",")}`);
-    return hasRole || isAdmin;
+    const m         = await guild.members.fetch(userId);
+    const roleIdStr = String(SUPPORT_ROLE_ID).trim();
+    const hasRole   = m.roles.cache.some(r => String(r.id).trim() === roleIdStr);
+    console.log(`[checkSupport] user=${userId} | lookingFor=${roleIdStr} | hasRole=${hasRole} | roles=${m.roles.cache.map(r=>r.id).join(",")}`);
+    return hasRole;
   } catch (e) {
     console.log(`[checkSupport ERROR] ${e.message}`);
     return false;
