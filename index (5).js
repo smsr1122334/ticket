@@ -199,15 +199,16 @@ async function sendTranscript(transcriptData, ticket, closedByUsername, closedBy
     `    Attachments Saved: ${attCount}\n` +
     "```";
 
-  // بناء الإمبد
+  // بناء الإمبد — بالضبط مثل Ticket Tool
   function makeEmbed(avatarURL) {
     const eb = new EmbedBuilder()
       .setColor(0x5865f2)
       .addFields(
-        { name: "صاحب التيكت",          value: `<@${ticket.userId}>`,   inline: true },
-        { name: "اسم التيكت",           value: ticket.channelName,       inline: true },
-        { name: "أُغلق بواسطة",         value: `<@${closedById}>`,       inline: true },
-        { name: "المشاركون في التيكت",  value: usernames.map(u=>`• ${u}`).join("\n") || "—", inline: false }
+        { name: "Ticket Owner", value: `<@${ticket.userId}>`,  inline: true },
+        { name: "Ticket Name",  value: ticket.channelName,      inline: true },
+        { name: "Panel Name",   value: "نظام التيكتات",         inline: true },
+        { name: "Direct Transcript", value: "Use Button",       inline: true },
+        { name: "Users in transcript", value: usernames.map((u, i) => `${i+1}- ${u}`).join("\n") || "—", inline: true }
       )
       .setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` })
       .setTimestamp();
@@ -275,10 +276,12 @@ function lockedRow(claimed) {
 }
 
 // ─── زر controls عادي (قبل القفل) ────────────────────────────────────────────
+// الفاتح يشوف زر الإغلاق — فريق الدعم يشوف كلايم + قفل
 function normalRow(claimed) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("claim_ticket").setLabel("كلايم").setEmoji("🟡").setStyle(ButtonStyle.Secondary).setDisabled(!!claimed),
-    new ButtonBuilder().setCustomId("lock_ticket").setLabel("قفل التيكت").setEmoji("🔒").setStyle(ButtonStyle.Primary)
+    new ButtonBuilder().setCustomId("lock_ticket").setLabel("قفل التيكت").setEmoji("🔒").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("opener_close_ticket").setLabel("إغلاق التيكت").setEmoji("🔐").setStyle(ButtonStyle.Danger)
   );
 }
 
@@ -307,7 +310,7 @@ client.on("interactionCreate", async (interaction) => {
   // فتح تيكت
   // ══════════════════════════════════════════════════════════════════════════════
   if (customId === "open_ticket") {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: 64 });
 
     // تحقق من تيكت موجود
     const data = loadData();
@@ -378,13 +381,13 @@ client.on("interactionCreate", async (interaction) => {
     // ✅ تحقق من الرول بعد fetch جديد
     const allowed = await checkSupport(guild, userId);
     if (!allowed)
-      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه الكلايم.", ephemeral: true });
+      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه الكلايم.", flags: 64 });
 
     const ticket = getTicket(channel.id);
     if (!ticket)
-      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", ephemeral: true });
+      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
     if (ticket.claimed)
-      return interaction.reply({ content: `❌ مكلايم بالفعل من <@${ticket.claimedBy}>.`, ephemeral: true });
+      return interaction.reply({ content: `❌ مكلايم بالفعل من <@${ticket.claimedBy}>.`, flags: 64 });
 
     ticket.claimed       = true;
     ticket.claimedBy     = userId;
@@ -407,13 +410,13 @@ client.on("interactionCreate", async (interaction) => {
   if (customId === "lock_ticket") {
     const allowed = await checkSupport(guild, userId);
     if (!allowed)
-      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه القفل.", ephemeral: true });
+      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه القفل.", flags: 64 });
 
     const ticket = getTicket(channel.id);
     if (!ticket)
-      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", ephemeral: true });
+      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
     if (ticket.locked)
-      return interaction.reply({ content: "❌ التيكت مقفل بالفعل.", ephemeral: true });
+      return interaction.reply({ content: "❌ التيكت مقفل بالفعل.", flags: 64 });
 
     const confirmRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId("confirm_lock").setLabel("نعم، قفل التيكت").setEmoji("🔒").setStyle(ButtonStyle.Danger),
@@ -433,7 +436,7 @@ client.on("interactionCreate", async (interaction) => {
           .setColor(0xfee75c),
       ],
       components: [confirmRow],
-      ephemeral: true,
+      flags: 64,
     });
   }
 
@@ -443,20 +446,21 @@ client.on("interactionCreate", async (interaction) => {
   if (customId === "confirm_lock") {
     const allowed = await checkSupport(guild, userId);
     if (!allowed)
-      return interaction.reply({ content: "❌ غير مصرح.", ephemeral: true });
+      return interaction.reply({ content: "❌ غير مصرح.", flags: 64 });
 
     const ticket = getTicket(channel.id);
     if (!ticket)
-      return interaction.reply({ content: "❌ التيكت غير موجود.", ephemeral: true });
+      return interaction.reply({ content: "❌ التيكت غير موجود.", flags: 64 });
 
     // أغلق الـ ephemeral confirmation أولاً
     await interaction.update({ embeds: [], components: [], content: "⏳ جاري القفل..." });
 
-    // ✅ سحب ViewChannel كاملاً من فاتح التيكت
+    // ✅ سحب ViewChannel كاملاً من فاتح التيكت — deny صريح يتجاوز حتى الأدمن
     await channel.permissionOverwrites.edit(ticket.userId, {
       ViewChannel:        false,
       SendMessages:       false,
       ReadMessageHistory: false,
+      Administrator:      false,
     }).catch(e => console.log("[Perm Error]", e.message));
 
     ticket.locked      = true;
@@ -501,10 +505,10 @@ client.on("interactionCreate", async (interaction) => {
   if (customId === "unlock_ticket") {
     const allowed = await checkSupport(guild, userId);
     if (!allowed)
-      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه فتح القفل.", ephemeral: true });
+      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه فتح القفل.", flags: 64 });
 
     const ticket = getTicket(channel.id);
-    if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", ephemeral: true });
+    if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
 
     // ✅ إرجاع ViewChannel لفاتح التيكت
     await channel.permissionOverwrites.edit(ticket.userId, {
@@ -528,29 +532,98 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   // ══════════════════════════════════════════════════════════════════════════════
-  // إغلاق التيكت (نهائي)
+  // إغلاق التيكت من قِبل الفاتح
+  // ══════════════════════════════════════════════════════════════════════════════
+  if (customId === "opener_close_ticket") {
+    const ticket = getTicket(channel.id);
+    if (!ticket)
+      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
+
+    // فقط الفاتح يقدر يضغطه
+    if (ticket.userId !== userId)
+      return interaction.reply({ content: "❌ فقط فاتح التيكت يمكنه إغلاقه.", flags: 64 });
+
+    if (ticket.locked)
+      return interaction.reply({ content: "❌ التيكت مقفل من قِبل الإدارة ولا يمكن إغلاقه.", flags: 64 });
+
+    // رسالة تأكيد
+    const confirmRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("opener_confirm_close").setLabel("نعم، أغلق التيكت").setEmoji("🔐").setStyle(ButtonStyle.Danger),
+      new ButtonBuilder().setCustomId("opener_cancel_close").setLabel("إلغاء").setEmoji("✖️").setStyle(ButtonStyle.Secondary)
+    );
+
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("⚠️ تأكيد الإغلاق")
+          .setDescription("هل تريد إغلاق هذا التيكت؟\n\nسيتم إرسال سجل المحادثة إليك على الخاص وحذف القناة.")
+          .setColor(0xfee75c),
+      ],
+      components: [confirmRow],
+      flags: 64,
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // تأكيد إغلاق الفاتح
+  // ══════════════════════════════════════════════════════════════════════════════
+  if (customId === "opener_confirm_close") {
+    const ticket = getTicket(channel.id);
+    if (!ticket || ticket.userId !== userId)
+      return interaction.update({ embeds: [], components: [], content: "❌ غير مصرح." });
+
+    await interaction.update({ embeds: [], components: [], content: "⏳ جاري الإغلاق..." });
+
+    ticket.channelName = channel.name;
+    const transcriptData = await buildTranscript(channel, ticket, guild);
+    await sendTranscript(transcriptData, ticket, username, userId, guild, { dm: true, archive: true });
+
+    ticket.closed = true;
+    deleteTicket(channel.id);
+
+    await channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setDescription("✅ تم إرسال السجل للفاتح والأرشيف. سيتم حذف القناة خلال **5 ثوانٍ**.")
+          .setColor(0xed4245),
+      ],
+    });
+
+    setTimeout(() => channel.delete().catch(() => {}), 5000);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // إلغاء إغلاق الفاتح
+  // ══════════════════════════════════════════════════════════════════════════════
+  if (customId === "opener_cancel_close") {
+    await interaction.update({
+      embeds: [new EmbedBuilder().setDescription("✅ تم إلغاء الإغلاق.").setColor(0x57f287)],
+      components: [],
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // إغلاق التيكت (نهائي - فريق الدعم)
   // ══════════════════════════════════════════════════════════════════════════════
   if (customId === "close_ticket") {
     const allowed = await checkSupport(guild, userId);
     if (!allowed)
-      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه الإغلاق.", ephemeral: true });
+      return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه الإغلاق.", flags: 64 });
 
     const ticket = getTicket(channel.id);
     if (!ticket)
-      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", ephemeral: true });
+      return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
 
     if (!ticket.locked)
       return interaction.reply({
         content: "❌ يجب **قفل** التيكت أولاً قبل الإغلاق النهائي. استخدم زر 🔒 القفل.",
-        ephemeral: true,
+        flags: 64,
       });
 
     await interaction.deferReply();
 
     ticket.channelName = channel.name;
     const transcriptData = await buildTranscript(channel, ticket, guild);
-
-    // ✅ إرسال للـ DM والأرشيف معاً
     await sendTranscript(transcriptData, ticket, username, userId, guild, { dm: true, archive: true });
 
     ticket.closed = true;
