@@ -139,15 +139,16 @@ const commands = [
     .setDescription("قائمة جميع الأوامر"),
 ].map(c => c.toJSON());
 
-// ─── Register Slash Commands ───────────────────────────────────────────────────
-async function registerCommands() {
-  const rest = new REST({ version: "10" }).setToken(TOKEN);
+// ─── Register Slash Commands (guild-level = فوري) ──────────────────────────────
+async function registerCommands(guildId) {
+  if (!CLIENT_ID) { console.error('[Commands Error] CLIENT_ID غير موجود في Variables!'); return; }
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
-    console.log("⏳ جاري تسجيل الأوامر...");
-    await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-    console.log("✅ تم تسجيل الأوامر بنجاح!");
+    console.log('⏳ جاري تسجيل الأوامر...');
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guildId), { body: commands });
+    console.log('✅ تم تسجيل الأوامر بنجاح!');
   } catch (e) {
-    console.error("[Commands Error]", e.message);
+    console.error('[Commands Error]', e.message);
   }
 }
 
@@ -369,9 +370,9 @@ async function openTicket(guild, userId, username, replyFn) {
 }
 
 // ─── Ready ─────────────────────────────────────────────────────────────────────
-client.once("ready", async () => {
+client.once("clientReady", async () => {
   console.log(`✅ البوت شغال: ${client.user.tag}`);
-  await registerCommands();
+  for (const g of client.guilds.cache.values()) await registerCommands(g.id);
   if (PANEL_CHANNEL_ID) {
     try {
       const ch   = await client.channels.fetch(PANEL_CHANNEL_ID);
