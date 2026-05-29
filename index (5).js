@@ -21,6 +21,13 @@ const {
 const fs   = require("fs");
 const path = require("path");
 
+// ─── Load dashboard settings ───────────────────────────────────────────────────
+function getBotSettings() {
+  const f = path.join(__dirname, "settings.json");
+  if (!fs.existsSync(f)) return {};
+  try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return {}; }
+}
+
 // ─── Config ────────────────────────────────────────────────────────────────────
 const TOKEN              = process.env.TOKEN;
 const SUPPORT_ROLE_ID    = process.env.SUPPORT_ROLE_ID;
@@ -320,12 +327,18 @@ function normalRow(claimed) {
 
 // ─── Panel ─────────────────────────────────────────────────────────────────────
 async function sendPanel(channel) {
+  const s = getBotSettings();
   await channel.send({
-    embeds: [new EmbedBuilder().setTitle("🎫 نظام التيكتات")
-      .setDescription("تحتاج مساعدة؟ اضغط على الزر أدناه لفتح تيكت.\nسيقوم فريق الدعم بالرد عليك في أقرب وقت.")
-      .setColor(0x5865f2).setFooter({ text: "نظام الدعم الفني" }).setTimestamp()],
+    embeds: [new EmbedBuilder()
+      .setTitle(s.panelTitle || "🎫 نظام التيكتات")
+      .setDescription(s.panelDescription || "تحتاج مساعدة؟ اضغط على الزر أدناه لفتح تيكت.\nسيقوم فريق الدعم بالرد عليك في أقرب وقت.")
+      .setColor(parseInt((s.panelColor||"#5865f2").replace("#",""), 16))
+      .setFooter({ text: "نظام الدعم الفني" }).setTimestamp()],
     components: [new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setCustomId("open_ticket").setLabel("فتح تيكت").setEmoji("🎫").setStyle(ButtonStyle.Primary)
+      new ButtonBuilder().setCustomId("open_ticket")
+        .setLabel(s.panelButtonText || "فتح تيكت")
+        .setEmoji(s.panelButtonEmoji || "🎫")
+        .setStyle(ButtonStyle.Primary)
     )],
   });
 }
