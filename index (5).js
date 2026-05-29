@@ -23,7 +23,6 @@ const path = require("path");
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 const TOKEN              = process.env.TOKEN;
-const CLIENT_ID          = process.env.CLIENT_ID;          // App ID من Discord Developer Portal
 const SUPPORT_ROLE_ID    = process.env.SUPPORT_ROLE_ID;
 const CATEGORY_ID        = process.env.CATEGORY_ID   || null;
 const PANEL_CHANNEL_ID   = process.env.PANEL_CHANNEL_ID;
@@ -141,12 +140,13 @@ const commands = [
 
 // ─── Register Slash Commands (guild-level = فوري) ──────────────────────────────
 async function registerCommands(guildId) {
-  if (!CLIENT_ID) { console.error('[Commands Error] CLIENT_ID غير موجود في Variables!'); return; }
+  const appId = client.application?.id;
+  if (!appId) { console.error('[Commands Error] client.application.id غير متاح!'); return; }
   const rest = new REST({ version: '10' }).setToken(TOKEN);
   try {
-    console.log('⏳ جاري تسجيل الأوامر...');
-    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, guildId), { body: commands });
-    console.log('✅ تم تسجيل الأوامر بنجاح!');
+    console.log('⏳ جاري تسجيل الأوامر على ' + guildId + '...');
+    await rest.put(Routes.applicationGuildCommands(appId, guildId), { body: commands });
+    console.log('✅ تم تسجيل الأوامر بنجاح على ' + guildId);
   } catch (e) {
     console.error('[Commands Error]', e.message);
   }
