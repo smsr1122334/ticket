@@ -717,10 +717,6 @@ client.on("interactionCreate", async (interaction) => {
             `**السبب:** ${reason}\n**بواسطة:** <@${userId}>\n\n` +
             (cdnUrl ? `🔗 [عرض المحادثة](${cdnUrl})` : "")
           ).setTimestamp()],
-      });
-
-      // ✅ زر الحذف بدون رسالة إضافية
-      await channel.send({
         components: [new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("delete_ticket").setLabel("حذف التيكت").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
         )],
