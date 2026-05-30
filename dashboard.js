@@ -59,9 +59,22 @@ app.use(session({
   cookie: { secure: false, maxAge: 86400000 },
 }));
 
+// ─── Owner ID — الشخص الوحيد المسموح له بالدخول ──────────────────────────────
+const OWNER_ID = process.env.DASHBOARD_OWNER_ID || "727844176015917146";
+
 // ─── Auth Middleware ───────────────────────────────────────────────────────────
 function requireAuth(req, res, next) {
   if (!req.session.user) return res.redirect("/login");
+  // تحقق إن المستخدم هو الأونر فقط
+  if (req.session.user.id !== OWNER_ID) {
+    req.session.destroy();
+    return res.send(`<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="UTF-8">
+    <style>body{font-family:sans-serif;background:#0f1117;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;flex-direction:column;gap:16px}
+    .card{background:#1a1d27;border:1px solid #ed424544;border-radius:16px;padding:40px;text-align:center}
+    h1{color:#ed4245;font-size:24px}p{color:#8892a4}</style></head>
+    <body><div class="card"><h1>🚫 غير مصرح</h1><p>ليس لديك صلاحية الوصول للوحة التحكم.</p>
+    <a href="/logout" style="color:#5865f2;margin-top:16px;display:block">رجوع</a></div></body></html>`);
+  }
   next();
 }
 
