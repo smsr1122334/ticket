@@ -48,7 +48,9 @@ const client = new Client({
 });
 
 // ─── Storage ───────────────────────────────────────────────────────────────────
-const DATA_FILE = path.join(__dirname, "tickets.json");
+const DATA_FILE = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'tickets.json')
+  : path.join('/tmp', 'tickets.json');
 function loadData() {
   if (!fs.existsSync(DATA_FILE))
     fs.writeFileSync(DATA_FILE, JSON.stringify({ counter: 0, tickets: {} }));
