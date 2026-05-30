@@ -366,11 +366,18 @@ async function openTicket(guild, userId, username, replyFn) {
   const ticket = { channelId: tc.id, channelName: tc.name, userId, username, ticketNumber: num, guildId: guild.id, createdAt: Date.now(), claimed: false, claimedBy: null, claimedByName: null, locked: false, closed: false, closeReason: null };
   saveTicket(tc.id, ticket);
 
+  const s = getBotSettings();
   await tc.send({
     content: `<@${userId}> | <@&${SUPPORT_ROLE_ID}>`,
-    embeds: [new EmbedBuilder().setTitle(`🎫 تيكت #${num}`)
-      .setDescription(`أهلاً <@${userId}>!\n\nتم فتح تيكتك. سيتواصل معك فريق الدعم قريباً.\nاشرح مشكلتك بالتفصيل.`)
-      .setColor(0x57f287)
+    embeds: [new EmbedBuilder()
+      .setTitle(`${s.welcomeTitle || "🎫 تيكت"} #${num}`)
+      .setDescription(
+        (s.welcomeDescription || "أهلاً {user}!\n\nتم فتح تيكتك. سيتواصل معك فريق الدعم قريباً.\nاشرح مشكلتك بالتفصيل.")
+          .replace(/\{user\}/g, `<@${userId}>`)
+          .replace(/\{num\}/g, num)
+          .replace(/\{SUPPORT\}/g, `<@&${SUPPORT_ROLE_ID}>`)
+      )
+      .setColor(parseInt((s.welcomeColor||"#57f287").replace("#",""), 16))
       .addFields(
         { name: "👤 فاتح التيكت", value: `<@${userId}>`, inline: true },
         { name: "🔢 رقم التيكت",  value: `#${num}`,       inline: true },
