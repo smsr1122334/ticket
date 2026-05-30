@@ -17,7 +17,10 @@ const SUPPORT_ROLE_ID       = process.env.SUPPORT_ROLE_ID;
 const REDIRECT_URI = `${DASHBOARD_URL}/auth/callback`;
 
 // ─── Settings Storage ──────────────────────────────────────────────────────────
-const SETTINGS_FILE = path.join(__dirname, "settings.json");
+// Railway Volume: اذا موجود استخدمه، وإلا /tmp
+const SETTINGS_FILE = process.env.RAILWAY_VOLUME_MOUNT_PATH
+  ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'settings.json')
+  : path.join('/tmp', 'settings.json');
 
 function loadSettings() {
   if (!fs.existsSync(SETTINGS_FILE))
@@ -39,7 +42,9 @@ function loadSettings() {
 function saveSettings(s) { fs.writeFileSync(SETTINGS_FILE, JSON.stringify(s, null, 2)); }
 
 function loadTickets() {
-  const f = path.join(__dirname, "tickets.json");
+  const f = process.env.RAILWAY_VOLUME_MOUNT_PATH
+    ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'tickets.json')
+    : path.join('/tmp', 'tickets.json');
   if (!fs.existsSync(f)) return { counter: 0, tickets: {} };
   return JSON.parse(fs.readFileSync(f, "utf8"));
 }
