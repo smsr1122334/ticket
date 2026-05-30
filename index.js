@@ -143,6 +143,26 @@ const commands = [
     .setDescription("اختبار سرعة استجابة البوت"),
 
   new SlashCommandBuilder()
+    .setName("config")
+    .setDescription("عرض أو تعديل إعدادات البوت [الأونر فقط]")
+    .addStringOption(o => o.setName("setting")
+      .setDescription("الإعداد المراد تعديله")
+      .setRequired(false)
+      .addChoices(
+        { name: "عنوان البانل",          value: "panelTitle" },
+        { name: "وصف البانل",            value: "panelDescription" },
+        { name: "لون البانل",            value: "panelColor" },
+        { name: "نص زر البانل",          value: "panelButtonText" },
+        { name: "إيموجي زر البانل",      value: "panelButtonEmoji" },
+        { name: "عنوان رسالة الترحيب",   value: "welcomeTitle" },
+        { name: "وصف رسالة الترحيب",    value: "welcomeDescription" },
+        { name: "لون رسالة الترحيب",     value: "welcomeColor" },
+        { name: "سبب الإغلاق الافتراضي", value: "closeReason" },
+      )
+    )
+    .addStringOption(o => o.setName("value").setDescription("القيمة الجديدة").setRequired(false)),
+
+  new SlashCommandBuilder()
     .setName("help")
     .setDescription("قائمة جميع الأوامر"),
 ].map(c => c.toJSON());
@@ -427,6 +447,64 @@ client.on("interactionCreate", async (interaction) => {
   // ══════════════════════════════════════════════════════════════════════════════
   if (interaction.isChatInputCommand()) {
     const { commandName } = interaction;
+
+    // ── /config ────────────────────────────────────────────────────────────────
+    if (commandName === "config") {
+      const OWNER_ID = process.env.DASHBOARD_OWNER_ID || "727844176015917146";
+      if (userId !== OWNER_ID)
+        return interaction.reply({ content: "❌ هذا الأمر للأونر فقط.", flags: 64 });
+
+      const setting = interaction.options.getString("setting");
+      const value   = interaction.options.getString("value");
+      const s       = getBotSettings();
+
+      // عرض الإعدادات الحالية
+      if (!setting) {
+        const settingNames = {
+          panelTitle:          "عنوان البانل",
+          panelDescription:    "وصف البانل",
+          panelColor:          "لون البانل",
+          panelButtonText:     "نص زر البانل",
+          panelButtonEmoji:    "إيموجي الزر",
+          welcomeTitle:        "عنوان الترحيب",
+          welcomeDescription:  "وصف الترحيب",
+          welcomeColor:        "لون الترحيب",
+          closeReason:         "سبب الإغلاق الافتراضي",
+        };
+        return interaction.reply({
+          embeds: [new EmbedBuilder()
+            .setTitle("⚙️ إعدادات البوت الحالية")
+            .setColor(0x5865f2)
+            .addFields(
+              Object.entries(settingNames).map(([k, name]) => ({
+                name, value: String(s[k] || "—").substring(0, 100), inline: true
+              }))
+            )
+            .setFooter({ text: "استخدم /config [إعداد] [قيمة] للتعديل" })
+            .setTimestamp()],
+          flags: 64,
+        });
+      }
+
+      // تعديل إعداد معين
+      if (!value)
+        return interaction.reply({ content: `القيمة الحالية لـ **${setting}**: \`${s[setting] || "—"}\`\n\nاستخدم \`/config ${setting} [القيمة الجديدة]\` للتعديل.`, flags: 64 });
+
+      s[setting] = value;
+      // حفظ الإعدادات
+      const f = process.env.RAILWAY_VOLUME_MOUNT_PATH
+        ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, "settings.json")
+        : path.join("/tmp", "settings.json");
+      fs.writeFileSync(f, JSON.stringify(s, null, 2));
+
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setDescription(`✅ تم تحديث **${setting}** إلى:\n\`\`\`${value}\`\`\``)
+          .setColor(0x57f287)
+          .setTimestamp()],
+        flags: 64,
+      });
+    }
 
     // ── /ping ──────────────────────────────────────────────────────────────────
     if (commandName === "ping") {
