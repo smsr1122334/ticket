@@ -699,48 +699,36 @@ client.on("interactionCreate", async (interaction) => {
   if (interaction.isModalSubmit()) {
 
     if (interaction.customId === "close_ticket_modal_submit") {
-      const reason = interaction.fields.getTextInputValue("close_reason").trim() || "لم يُذكر سبب";
+      // ✅ السبب الافتراضي "تم الخدمة" لو ما كتب شيء
+      const reason = interaction.fields.getTextInputValue("close_reason").trim() || "تم الخدمة";
       const ticket = getTicket(channel.id);
       if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
 
       await interaction.deferReply();
       const cdnUrl = await closeTicket(channel, ticket, guild, userId, reason);
 
-      // بعد الإغلاق — احفظ حالة pendingDelete عشان زر الحذف يشتغل
+      // احفظ pendingDelete عشان زر الحذف في القناة يشتغل
       const closedTicket = { ...ticket, pendingDelete: true, closed: true, closeReason: reason };
       saveTicket(channel.id, closedTicket);
 
-      // أزرار ما بعد الإغلاق
-      const afterCloseRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("delete_ticket").setLabel("حذف التيكت").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
-      );
-
+      // رسالة الإغلاق بدون زر حذف — الزر يجي في رسالة منفصلة
       await interaction.editReply({
         embeds: [new EmbedBuilder().setTitle("🔒 تم إغلاق التيكت").setColor(0xed4245)
           .setDescription(
             `**السبب:** ${reason}\n**بواسطة:** <@${userId}>\n\n` +
-            (cdnUrl ? `🔗 [عرض المحادثة](${cdnUrl})\n\n` : "") +
-            `اضغط على **حذف التيكت** لحذف القناة نهائياً.`
+            (cdnUrl ? `🔗 [عرض المحادثة](${cdnUrl})` : "")
           ).setTimestamp()],
-        components: [afterCloseRow],
       });
-      return;
-    }
 
-    if (interaction.customId === "delete_ticket_modal_submit") {
-      const reason = interaction.fields.getTextInputValue("delete_reason").trim() || "لم يُذكر سبب";
-      if (!await isSupport(guild, userId))
-        return interaction.reply({ content: "❌ فقط فريق الدعم.", flags: 64 });
-
-      await interaction.deferReply();
-      await interaction.editReply({
-        embeds: [new EmbedBuilder().setTitle("🗑️ جاري حذف التيكت").setColor(0xed4245)
-          .setDescription(`**السبب:** ${reason}\n**بواسطة:** <@${userId}>\n\n⏳ سيتم حذف القناة خلال 5 ثوانٍ...`)
-          .setTimestamp()],
+      // ✅ زر الحذف يجي في رسالة منفصلة في القناة
+      await channel.send({
+        embeds: [new EmbedBuilder()
+          .setDescription("✅ تم إغلاق التيكت بنجاح. عند الانتهاء اضغط على زر الحذف لحذف القناة.")
+          .setColor(0x57f287)],
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId("delete_ticket").setLabel("حذف التيكت").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
+        )],
       });
-      // احذف من الـ storage ثم القناة
-      delTicket(channel.id);
-      setTimeout(() => channel.delete().catch(()=>{}), 5000);
       return;
     }
   }
@@ -780,7 +768,9 @@ client.on("interactionCreate", async (interaction) => {
     const modal = new ModalBuilder().setCustomId("close_ticket_modal_submit").setTitle("🔒 إغلاق التيكت");
     modal.addComponents(new ActionRowBuilder().addComponents(
       new TextInputBuilder().setCustomId("close_reason").setLabel("سبب الإغلاق")
-        .setStyle(TextInputStyle.Paragraph).setPlaceholder("مثال: تم حل المشكلة").setRequired(false).setMaxLength(500)
+        .setStyle(TextInputStyle.Paragraph)
+        .setValue("تم الخدمة")
+        .setRequired(false).setMaxLength(500)
     ));
     await interaction.showModal(modal);
   }
@@ -790,26 +780,25 @@ client.on("interactionCreate", async (interaction) => {
       return interaction.reply({ content: "❌ فقط فريق الدعم يمكنه حذف التيكت.", flags: 64 });
 
     const ticket = getTicket(channel.id);
-    if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
 
-    // ✅ يجب إغلاق التيكت أولاً (يعني مرّ بـ close_ticket_modal وتم حذفه من الـ storage)
-    // بما أن closeTicket() يحذف من الـ storage، نتحقق من حالة ticket.closed
-    // الحل: نضيف flag "pendingDelete" بعد الإغلاق
-    if (!ticket.pendingDelete) {
+    // يجب أن يكون مغلقاً أولاً
+    if (ticket && !ticket.pendingDelete)
       return interaction.reply({
         embeds: [new EmbedBuilder()
-          .setDescription("❌ يجب **إغلاق التيكت أولاً** قبل حذفه.\n\nاضغط على 🔒 **إغلاق التيكت** ثم استخدم **حذف التيكت**.")
+          .setDescription("❌ يجب **إغلاق** التيكت أولاً. استخدم زر 🔒 **إغلاق التيكت**.")
           .setColor(0xed4245)],
         flags: 64,
       });
-    }
 
-    const modal = new ModalBuilder().setCustomId("delete_ticket_modal_submit").setTitle("🗑️ حذف التيكت");
-    modal.addComponents(new ActionRowBuilder().addComponents(
-      new TextInputBuilder().setCustomId("delete_reason").setLabel("سبب الحذف")
-        .setStyle(TextInputStyle.Paragraph).setPlaceholder("مثال: تيكت مكرر").setRequired(false).setMaxLength(500)
-    ));
-    await interaction.showModal(modal);
+    await interaction.deferReply();
+    await interaction.editReply({
+      embeds: [new EmbedBuilder()
+        .setDescription("🗑️ جاري حذف القناة خلال **5 ثوانٍ**...")
+        .setColor(0xed4245)],
+    });
+
+    delTicket(channel.id);
+    setTimeout(() => channel.delete().catch(() => {}), 5000);
   }
 });
 
