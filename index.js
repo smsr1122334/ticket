@@ -258,10 +258,12 @@ async function archiveTranscript(buf, fileName, ticket, closedByUserId, closeRea
   try {
     const ch       = await client.channels.fetch(ARCHIVE_CHANNEL_ID);
     const fileSize = `${(buf.length / 1024).toFixed(0)} KB`;
+    const duration = Math.round((Date.now() - ticket.createdAt) / 60000);
 
-    // أول إرسال الملف عشان نجيب CDN URL
+    // أرسل الملف أولاً بـ SPOILER عشان يخفي الـ preview
+    const spoilerName = `SPOILER_${fileName}`;
     const fileSent = await ch.send({
-      files: [new AttachmentBuilder(buf, { name: fileName })],
+      files: [new AttachmentBuilder(buf, { name: spoilerName })],
     });
     const cdnUrl = fileSent.attachments.first()?.url ?? null;
 
@@ -271,16 +273,16 @@ async function archiveTranscript(buf, fileName, ticket, closedByUserId, closeRea
       .setTitle(`📋 سجل تيكت #${ticket.ticketNumber}`)
       .setDescription(
         `تم إغلاق تيكت **${ticket.channelName}** في **${guild.name}**.\n\n` +
-        (cdnUrl ? `> 🔗 **[اضغط هنا لعرض المحادثة الكاملة](${cdnUrl})**` : "> السجل مرفق أعلاه.")
+        (cdnUrl ? `> 🔗 **[اضغط هنا لعرض المحادثة الكاملة](${cdnUrl})**` : "")
       )
       .addFields(
-        { name: "🏠 السيرفر",           value: guild.name,             inline: true  },
-        { name: "👤 فاتح التيكت",       value: `<@${ticket.userId}>`,  inline: true  },
-        { name: "👮 أُغلق بواسطة",     value: `<@${closedByUserId}>`, inline: true  },
-        { name: "📝 سبب الإغلاق",       value: closeReason || "—",     inline: true  },
-        { name: "⏱️ مدة التيكت",       value: `${Math.round((Date.now()-ticket.createdAt)/60000)} دقيقة`, inline: true },
-        { name: "💬 عدد الرسائل",       value: `${msgCount}`,          inline: true  },
-        { name: "👥 المشاركون",         value: usernames.map((u,i)=>`${i+1}. ${u}`).join("\n") || "—", inline: false }
+        { name: "🏠 السيرفر",       value: guild.name,             inline: true  },
+        { name: "👤 فاتح التيكت",   value: `<@${ticket.userId}>`,  inline: true  },
+        { name: "👮 أُغلق بواسطة", value: `<@${closedByUserId}>`, inline: true  },
+        { name: "📝 سبب الإغلاق",   value: closeReason || "—",     inline: true  },
+        { name: "⏱️ مدة التيكت",   value: `${duration} دقيقة`,    inline: true  },
+        { name: "💬 عدد الرسائل",   value: `${msgCount}`,          inline: true  },
+        { name: "👥 المشاركون",     value: usernames.map((u,i)=>`${i+1}. ${u}`).join("\n") || "—", inline: false }
       )
       .setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` })
       .setTimestamp();
