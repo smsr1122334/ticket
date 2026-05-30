@@ -332,8 +332,7 @@ async function closeTicket(channel, ticket, guild, closedByUserId, closeReason) 
 function normalRow(claimed) {
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("claim_ticket").setLabel("كلايم").setEmoji("🟡").setStyle(ButtonStyle.Secondary).setDisabled(!!claimed),
-    new ButtonBuilder().setCustomId("close_ticket_modal").setLabel("إغلاق التيكت").setEmoji("🔒").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("delete_ticket").setLabel("حذف التيكت").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
+    new ButtonBuilder().setCustomId("close_ticket_modal").setLabel("إغلاق التيكت").setEmoji("🔒").setStyle(ButtonStyle.Primary)
   );
 }
 
