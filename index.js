@@ -252,31 +252,41 @@ async function buildTranscript(channel, ticket, guild) {
   return { html, msgCount, attCount, usernames };
 }
 
-// ─── Archive → CDN URL ─────────────────────────────────────────────────────────
+// ─── Archive → CDN URL (نفس شكل الـ DM) ──────────────────────────────────────
 async function archiveTranscript(buf, fileName, ticket, closedByUserId, closeReason, guild, usernames, msgCount, attCount) {
   if (!ARCHIVE_CHANNEL_ID) return null;
   try {
     const ch       = await client.channels.fetch(ARCHIVE_CHANNEL_ID);
     const fileSize = `${(buf.length / 1024).toFixed(0)} KB`;
-    const serverInfo = "```\n<Server-Info>\n" +
-      `    Server: ${guild.name} (${guild.id})\n` +
-      `    Channel: ${ticket.channelName} (${ticket.channelId})\n` +
-      `    Messages: ${msgCount}\n` +
-      `    Attachments Saved: ${attCount}\n` + "```";
 
-    const embed = new EmbedBuilder().setColor(0x5865f2).setAuthor({ name: ticket.username })
+    // أول إرسال الملف عشان نجيب CDN URL
+    const fileSent = await ch.send({
+      files: [new AttachmentBuilder(buf, { name: fileName })],
+    });
+    const cdnUrl = fileSent.attachments.first()?.url ?? null;
+
+    // ثم إرسال الإمبد بنفس شكل الـ DM
+    const embed = new EmbedBuilder()
+      .setColor(0x5865f2)
+      .setTitle(`📋 سجل تيكت #${ticket.ticketNumber}`)
+      .setDescription(
+        `تم إغلاق تيكت **${ticket.channelName}** في **${guild.name}**.\n\n` +
+        (cdnUrl ? `> 🔗 **[اضغط هنا لعرض المحادثة الكاملة](${cdnUrl})**` : "> السجل مرفق أعلاه.")
+      )
       .addFields(
-        { name: "Ticket Owner",        value: `<@${ticket.userId}>`, inline: true },
-        { name: "Ticket Name",         value: ticket.channelName,     inline: true },
-        { name: "Panel Name",          value: "نظام التيكتات",        inline: true },
-        { name: "Closed By",           value: `<@${closedByUserId}>`, inline: true },
-        { name: "Close Reason",        value: closeReason || "—",     inline: true },
-        { name: "Direct Transcript",   value: "Use Button",           inline: true },
-        { name: "Users in transcript", value: usernames.map((u,i)=>`${i+1}- ${u}`).join("\n")||"—", inline: false }
-      ).setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` }).setTimestamp();
+        { name: "🏠 السيرفر",           value: guild.name,             inline: true  },
+        { name: "👤 فاتح التيكت",       value: `<@${ticket.userId}>`,  inline: true  },
+        { name: "👮 أُغلق بواسطة",     value: `<@${closedByUserId}>`, inline: true  },
+        { name: "📝 سبب الإغلاق",       value: closeReason || "—",     inline: true  },
+        { name: "⏱️ مدة التيكت",       value: `${Math.round((Date.now()-ticket.createdAt)/60000)} دقيقة`, inline: true },
+        { name: "💬 عدد الرسائل",       value: `${msgCount}`,          inline: true  },
+        { name: "👥 المشاركون",         value: usernames.map((u,i)=>`${i+1}. ${u}`).join("\n") || "—", inline: false }
+      )
+      .setFooter({ text: `${guild.name} • ${fileName} • ${fileSize}` })
+      .setTimestamp();
 
-    const sent = await ch.send({ content: serverInfo, embeds: [embed], files: [new AttachmentBuilder(buf, { name: fileName })] });
-    return sent.attachments.first()?.url ?? null;
+    await ch.send({ embeds: [embed] });
+    return cdnUrl;
   } catch (e) { console.log("[Archive Error]", e.message); return null; }
 }
 
@@ -693,30 +703,41 @@ client.on("interactionCreate", async (interaction) => {
 
       await interaction.deferReply();
       const cdnUrl = await closeTicket(channel, ticket, guild, userId, reason);
+
+      // بعد الإغلاق — احفظ حالة pendingDelete عشان زر الحذف يشتغل
+      const closedTicket = { ...ticket, pendingDelete: true, closed: true, closeReason: reason };
+      saveTicket(channel.id, closedTicket);
+
+      // أزرار ما بعد الإغلاق
+      const afterCloseRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("delete_ticket").setLabel("حذف التيكت").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
+      );
+
       await interaction.editReply({
         embeds: [new EmbedBuilder().setTitle("🔒 تم إغلاق التيكت").setColor(0xed4245)
-          .setDescription(`**السبب:** ${reason}\n**بواسطة:** <@${userId}>\n\n` +
-            (cdnUrl ? `🔗 [عرض المحادثة](${cdnUrl})` : "") + "\n\n⏳ سيتم حذف القناة خلال 5 ثوانٍ...")
-          .setTimestamp()],
+          .setDescription(
+            `**السبب:** ${reason}\n**بواسطة:** <@${userId}>\n\n` +
+            (cdnUrl ? `🔗 [عرض المحادثة](${cdnUrl})\n\n` : "") +
+            `اضغط على **حذف التيكت** لحذف القناة نهائياً.`
+          ).setTimestamp()],
+        components: [afterCloseRow],
       });
-      setTimeout(() => channel.delete().catch(()=>{}), 5000);
       return;
     }
 
     if (interaction.customId === "delete_ticket_modal_submit") {
       const reason = interaction.fields.getTextInputValue("delete_reason").trim() || "لم يُذكر سبب";
-      const ticket = getTicket(channel.id);
-      if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
-      if (!await isSupport(guild, userId)) return interaction.reply({ content: "❌ فقط فريق الدعم.", flags: 64 });
+      if (!await isSupport(guild, userId))
+        return interaction.reply({ content: "❌ فقط فريق الدعم.", flags: 64 });
 
       await interaction.deferReply();
-      const cdnUrl = await closeTicket(channel, ticket, guild, userId, reason);
       await interaction.editReply({
-        embeds: [new EmbedBuilder().setTitle("🗑️ تم حذف التيكت").setColor(0xed4245)
-          .setDescription(`**السبب:** ${reason}\n**بواسطة:** <@${userId}>\n\n` +
-            (cdnUrl ? `🔗 [عرض المحادثة](${cdnUrl})` : "") + "\n\n⏳ سيتم حذف القناة خلال 5 ثوانٍ...")
+        embeds: [new EmbedBuilder().setTitle("🗑️ جاري حذف التيكت").setColor(0xed4245)
+          .setDescription(`**السبب:** ${reason}\n**بواسطة:** <@${userId}>\n\n⏳ سيتم حذف القناة خلال 5 ثوانٍ...`)
           .setTimestamp()],
       });
+      // احذف من الـ storage ثم القناة
+      delTicket(channel.id);
       setTimeout(() => channel.delete().catch(()=>{}), 5000);
       return;
     }
@@ -768,6 +789,18 @@ client.on("interactionCreate", async (interaction) => {
 
     const ticket = getTicket(channel.id);
     if (!ticket) return interaction.reply({ content: "❌ هذه القناة ليست تيكتاً.", flags: 64 });
+
+    // ✅ يجب إغلاق التيكت أولاً (يعني مرّ بـ close_ticket_modal وتم حذفه من الـ storage)
+    // بما أن closeTicket() يحذف من الـ storage، نتحقق من حالة ticket.closed
+    // الحل: نضيف flag "pendingDelete" بعد الإغلاق
+    if (!ticket.pendingDelete) {
+      return interaction.reply({
+        embeds: [new EmbedBuilder()
+          .setDescription("❌ يجب **إغلاق التيكت أولاً** قبل حذفه.\n\nاضغط على 🔒 **إغلاق التيكت** ثم استخدم **حذف التيكت**.")
+          .setColor(0xed4245)],
+        flags: 64,
+      });
+    }
 
     const modal = new ModalBuilder().setCustomId("delete_ticket_modal_submit").setTitle("🗑️ حذف التيكت");
     modal.addComponents(new ActionRowBuilder().addComponents(
