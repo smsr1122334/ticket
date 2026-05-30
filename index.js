@@ -719,11 +719,8 @@ client.on("interactionCreate", async (interaction) => {
           ).setTimestamp()],
       });
 
-      // ✅ زر الحذف يجي في رسالة منفصلة في القناة
+      // ✅ زر الحذف بدون رسالة إضافية
       await channel.send({
-        embeds: [new EmbedBuilder()
-          .setDescription("✅ تم إغلاق التيكت بنجاح. عند الانتهاء اضغط على زر الحذف لحذف القناة.")
-          .setColor(0x57f287)],
         components: [new ActionRowBuilder().addComponents(
           new ButtonBuilder().setCustomId("delete_ticket").setLabel("حذف التيكت").setEmoji("🗑️").setStyle(ButtonStyle.Danger)
         )],
