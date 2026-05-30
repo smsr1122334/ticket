@@ -5,7 +5,7 @@ const fs             = require("fs");
 const path           = require("path");
 
 const app  = express();
-const PORT = process.env.DASHBOARD_PORT || 3000;
+const PORT = process.env.PORT || process.env.DASHBOARD_PORT || 3000;
 
 // ─── Config ────────────────────────────────────────────────────────────────────
 const DISCORD_CLIENT_ID     = process.env.DISCORD_CLIENT_ID;     // من Developer Portal → OAuth2
